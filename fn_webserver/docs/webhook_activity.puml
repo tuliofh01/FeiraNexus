@@ -15,7 +15,7 @@ start
 if (Signature valid?) then (no)
   :View layer: RenderError(400, "invalid signature");
   stop
-endif (yes)
+endif
 
 :Dispatcher.Enqueue(JobWebhookProcess\n{ payment_intent_id, type });
 
@@ -27,7 +27,7 @@ fork
     :Begin transaction;
     :GetOrderByPaymentIntent(pi);
     if (order status == pending?) then (no)
-      :Commit;  <<idempotent, no-op>>
+      :Commit <<idempotent, no-op>>;
     else (yes)
       :UpdateOrderStatus(order, "paid");
       :DecrementProductStock for each order_item\n(FOR UPDATE inside same tx);

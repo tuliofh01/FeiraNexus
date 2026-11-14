@@ -19,7 +19,7 @@ partition "Concurrent validation (golang.org/x/sync/errgroup)" {
 if (All validations pass?) then (no)
   :View layer: RenderError(400, "validation failed");
   stop
-endif (yes)
+endif
 
 partition "Model layer — store.ExecTx (ACID)" {
   :Begin transaction;
@@ -32,7 +32,7 @@ partition "Model layer — store.ExecTx (ACID)" {
 if (Transaction error?) then (yes)
   :View layer: RenderError(500, ...);
   stop
-endif (no)
+endif
 
 partition "Stripe PaymentIntent" {
   :Create PaymentIntent\n(amount = total_cents, currency, order);\nIdempotencyKey = order.ID.String();
@@ -42,7 +42,7 @@ partition "Stripe PaymentIntent" {
 if (PaymentIntent error?) then (yes)
   :Model: mark order failed;\nView layer: RenderError(502, ...);
   stop
-endif (no)
+endif
 
 :View layer: RenderCreated(CheckoutResponseView\n{ order_id, client_secret, status: "pending" });
 
