@@ -1,0 +1,65 @@
+@startuml
+skinparam monochrome true
+title FeiraNexus — Use Case Diagram
+
+left to right direction
+
+actor "Customer" as customer
+actor "Admin" as admin
+actor "Stripe" as stripe
+actor "Worker Pool" as worker
+
+rectangle "FeiraNexus API (fn_webserver)" {
+  usecase "Register" as UC1
+  usecase "Login (JWT + refresh)" as UC2
+  usecase "Refresh Token\n(reuse detection)" as UC3
+  usecase "Logout" as UC4
+  usecase "List Sessions" as UC5
+  usecase "Revoke Session" as UC6
+  usecase "Browse Products" as UC7
+  usecase "View Product Detail" as UC8
+  usecase "Create Product" as UC9
+  usecase "Checkout\n(errgroup + PaymentIntent)" as UC10
+  usecase "Process Stripe Webhook\n(signature verify + async)" as UC11
+  usecase "Health Check (/healthz)" as UC12
+  usecase "Revoke Compromised User" as UC13
+  usecase "Delete Expired Sessions\n(30-min janitor)" as UC14
+  usecase "Audit Logging" as UC15
+}
+
+customer --> UC1
+customer --> UC2
+customer --> UC3
+customer --> UC4
+customer --> UC5
+customer --> UC6
+customer --> UC7
+customer --> UC8
+customer --> UC10
+
+admin --> UC9
+admin --> UC7
+admin --> UC8
+
+stripe --> UC11
+
+worker --> UC11
+worker --> UC13
+worker --> UC14
+worker --> UC15
+
+UC3 ..> UC13 : <<triggers>> revoked token reuse
+UC11 ..> UC10 : <<completes>> pending order
+UC10 ..> UC11 : <<generates>> payment event
+
+note right of UC12
+  Returned by Docker HEALTHCHECK
+  and DO App Platform health check.
+  Reports DB ping + queue depth.
+end note
+
+note bottom of UC14
+  time.NewTicker(30 * time.Minute)
+  calls store.DeleteExpiredSessions(ctx)
+end note
+@enduml

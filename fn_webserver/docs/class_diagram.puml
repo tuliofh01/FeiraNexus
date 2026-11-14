@@ -1,0 +1,256 @@
+@startuml
+skinparam monochrome true
+skinparam packageStyle rectangle
+title FeiraNexus — MVC Class Diagram
+
+package "cmd/api" {
+  class Main {
+    + main()
+    + setupRouter()
+    + startWorker()
+    + gracefulShutdown()
+  }
+}
+
+package "internal/config" {
+  class Config {
+    + PORT : string
+    + GIN_MODE : string
+    + DATABASE_URL : string
+    + JWT_SECRET : string
+    + AES_MASTER_KEY_HEX : string
+    + STRIPE_SECRET_KEY : string
+    + STRIPE_WEBHOOK_SECRET : string
+    + Load() Config
+  }
+}
+
+package "internal/crypto" {
+  class Password {
+    + Hash(password : string) : (string, error)
+    + Verify(encodedHash, password : string) : error
+  }
+  class Token {
+    - secret : []byte
+    + GenerateJWT(sub, sid, role : string) : (string, error)
+    + ValidateJWT(token : string) : (*Claims, error)
+    + GenerateRefreshToken() : (string, error)
+    + HashRefreshToken(token : string) : string
+  }
+  class AES {
+    - key []byte
+    + Encrypt(plaintext : []byte) : ([]byte, error)
+    + Decrypt(ciphertext : []byte) : ([]byte, error)
+  }
+}
+
+package "internal/worker" {
+  enum JobType {
+    JobWebhookProcess
+    JobRevokeCompromisedUser
+    JobAuditLog
+  }
+  class Job {
+    + Type : JobType
+    + Payload : any
+  }
+  class Dispatcher {
+    - jobChan : chan Job (cap 256)
+    - wg : sync.WaitGroup
+    - numWorkers : int (4)
+    + Start(ctx : context.Context)
+    + Enqueue(job : Job) : error
+    + Drain()
+    + QueueLen() : int
+  }
+  class SessionJanitor {
+    + Run(ticker : *time.Ticker, store : *Store)
+  }
+}
+
+package "internal/middleware" {
+  class AuthMiddleware {
+    + RequireAuth() : gin.HandlerFunc
+    + RequireAdmin() : gin.HandlerFunc
+  }
+  class RateLimitMiddleware {
+    + Limit() : gin.HandlerFunc
+  }
+}
+
+package "internal/models" {
+  class Store {
+    - queries : *db.Queries
+    - pool : *pgxpool.Pool
+    + New(pool) : *Store
+    - ExecTx(ctx, fn : func(*db.Queries) error) : error
+    + CreateOrderTx(ctx, userID, items) : (*db.Order, error)
+    + ApplyPaymentTx(ctx, paymentIntentID) : (*db.Order, error)
+  }
+
+  package "internal/models/db" {
+    class Queries {
+      + GetUserByEmail(email) : (db.User, error)
+      + CreateUser(params) : (db.User, error)
+      + GetSessionByRefreshHash(hash) : (db.Session, error)
+      + CreateSession(params) : (db.Session, error)
+      + RotateSessionToken(sessionID, newHash) : (db.Session, error)
+      + RevokeSession(sessionID) : error
+      + RevokeAllUserSessions(userID) : error
+      + DeleteExpiredSessions() : (int64, error)
+      + ListUserSessions(userID) : ([]db.Session, error)
+      + ListProducts(limit, offset) : ([]db.Product, error)
+      + GetProduct(id) : (db.Product, error)
+      + GetProductForUpdate(id) : (db.Product, error)
+      + CreateProduct(params) : (db.Product, error)
+      + DecrementProductStock(id, qty) : (int64, error)
+      + CreateOrder(params) : (db.Order, error)
+      + CreateOrderItem(params) : (db.OrderItem, error)
+      + GetOrderByPaymentIntent(pi) : (db.Order, error)
+      + UpdateOrderStatus(id, status) : (db.Order, error)
+      + ListUserOrders(userID) : ([]db.Order, error)
+    }
+    class User {
+      + ID : uuid.UUID
+      + Email : string
+      + PasswordHash : string
+      + Role : string
+      + StripeCustomerID : sql.NullString
+      + CreatedAt : time.Time
+      + UpdatedAt : time.Time
+    }
+    class Session {
+      + ID : uuid.UUID
+      + UserID : uuid.UUID
+      + RefreshTokenHash : string
+      + UserAgent : sql.NullString
+      + ClientIP : sql.NullString
+      + IsRevoked : bool
+      + ExpiresAt : time.Time
+      + CreatedAt : time.Time
+    }
+    class Product {
+      + ID : uuid.UUID
+      + Name : string
+      + Description : sql.NullString
+      + PriceCents : int64
+      + Currency : string
+      + StockQuantity : int32
+      + IsActive : bool
+      + CreatedAt : time.Time
+    }
+    class Order {
+      + ID : uuid.UUID
+      + UserID : uuid.UUID
+      + Status : string
+      + TotalCents : int64
+      + Currency : string
+      + StripePaymentIntentID : sql.NullString
+      + CreatedAt : time.Time
+    }
+    class OrderItem {
+      + ID : uuid.UUID
+      + OrderID : uuid.UUID
+      + ProductID : uuid.UUID
+      + Quantity : int32
+      + UnitPriceCents : int64
+    }
+  }
+}
+
+package "internal/views" {
+  class Response {
+    + RenderSuccess(c, data)
+    + RenderCreated(c, data)
+    + RenderError(c, code, message)
+    + RenderPaginated(c, data, meta)
+  }
+  class AuthView {
+    + ToUserView(u db.User) : UserView
+    + ToSessionView(s db.Session) : SessionView
+  }
+  class ProductView {
+    + ToProductView(p db.Product) : ProductView
+    + FormatCents(cents int64, currency string) : string
+  }
+  class OrderView {
+    + ToCheckoutView(clientSecret, order) : CheckoutResponseView
+  }
+}
+
+package "internal/controllers" {
+  class Router {
+    + Setup() : *gin.Engine
+  }
+  class AuthController {
+    - store : *models.Store
+    - tokens : *crypto.Token
+    + Register(c)
+    + Login(c)
+    + Refresh(c)
+    + Logout(c)
+    + ListSessions(c)
+    + RevokeSession(c)
+  }
+  class ProductController {
+    - store : *models.Store
+    + List(c)
+    + Get(c)
+    + Create(c)
+  }
+  class CheckoutController {
+    - store : *models.Store
+    + Checkout(c)
+  }
+  class WebhookController {
+    - store : *models.Store
+    - dispatcher : *worker.Dispatcher
+    + StripeWebhook(c)
+  }
+  class HealthController {
+    - store : *models.Store
+    - dispatcher : *worker.Dispatcher
+    + Healthz(c)
+  }
+}
+
+' Relationships
+Main ..> Config : loads
+Main ..> Store : creates pool
+Main ..> Dispatcher : starts workers
+Main ..> Router : wires
+
+Router ..> AuthController
+Router ..> ProductController
+Router ..> CheckoutController
+Router ..> WebhookController
+Router ..> HealthController
+
+AuthController --> Store : queries
+AuthController --> Password : verify
+AuthController --> Token : issue/validate
+AuthController --> Response : renders
+AuthController --> AuthView : maps DTOs
+AuthController --> Dispatcher : enqueue revoke job
+
+ProductController --> Store
+ProductController --> Response
+ProductController --> ProductView
+
+CheckoutController --> Store
+CheckoutController --> Response
+CheckoutController --> OrderView
+
+WebhookController --> Store
+WebhookController --> Dispatcher : enqueue webhook job
+
+HealthController --> Store : ping
+HealthController --> Dispatcher : queue telemetry
+
+Store --> Queries : embeds
+Store --> SessionJanitor : exposes
+
+Middleware --> Config : JWT secret
+Dispatcher --> SessionJanitor : ticker goroutine
+Dispatcher --> Job : channel jobs
+@enduml

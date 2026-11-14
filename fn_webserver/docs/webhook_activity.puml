@@ -1,0 +1,44 @@
+@startuml
+skinparam monochrome true
+title FeiraNexus — Stripe Webhook Activity Diagram
+
+start
+
+:Stripe: POST /api/v1/webhooks/stripe;
+
+:Controller: payload = io.ReadAll(c.Request.Body);\nraw body preserved for signature verification;
+
+:Read header "Stripe-Signature";
+
+:webhook.ConstructEvent(payload, sigHeader, STRIPE_WEBHOOK_SECRET);
+
+if (Signature valid?) then (no)
+  :View layer: RenderError(400, "invalid signature");
+  stop
+endif (yes)
+
+:Dispatcher.Enqueue(JobWebhookProcess\n{ payment_intent_id, type });
+
+:View layer: RenderSuccess(200, "queued")  <<immediate return>>;
+
+fork
+  :Worker goroutine dequeues JobWebhookProcess;
+  partition "Model layer — store.ExecTx (ACID)" {
+    :Begin transaction;
+    :GetOrderByPaymentIntent(pi);
+    if (order status == pending?) then (no)
+      :Commit;  <<idempotent, no-op>>
+    else (yes)
+      :UpdateOrderStatus(order, "paid");
+      :DecrementProductStock for each order_item\n(FOR UPDATE inside same tx);
+      :Commit;
+    endif
+  }
+  :Order now paid + inventory deducted;
+fork again
+  :Optional: Enqueue(JobAuditLog\nevent = "payment.succeeded");
+end fork
+
+stop
+
+@enduml

@@ -1,0 +1,51 @@
+@startuml
+skinparam monochrome true
+title FeiraNexus — Checkout Activity Diagram
+
+start
+
+:Client: POST /api/v1/checkout\n(CheckoutRequest: product IDs + quantities);
+
+:Auth middleware validates JWT;
+
+partition "Concurrent validation (golang.org/x/sync/errgroup)" {
+  fork
+    :Verify user state in Model layer;
+  fork again
+    :For each item: GetProductForUpdate (SELECT ... FOR UPDATE)\nvalidate stock_quantity >= requested;
+  end fork
+}
+
+if (All validations pass?) then (no)
+  :View layer: RenderError(400, "validation failed");
+  stop
+endif (yes)
+
+partition "Model layer — store.ExecTx (ACID)" {
+  :Begin transaction;
+  :Create Order (status = pending);
+  :Create OrderItems (unit_price_cents snapshot);
+  :DecrementProductStock for each item;
+  :Commit;
+}
+
+if (Transaction error?) then (yes)
+  :View layer: RenderError(500, ...);
+  stop
+endif (no)
+
+partition "Stripe PaymentIntent" {
+  :Create PaymentIntent\n(amount = total_cents, currency, order);\nIdempotencyKey = order.ID.String();
+  :Persist stripe_payment_intent_id on order;
+}
+
+if (PaymentIntent error?) then (yes)
+  :Model: mark order failed;\nView layer: RenderError(502, ...);
+  stop
+endif (no)
+
+:View layer: RenderCreated(CheckoutResponseView\n{ order_id, client_secret, status: "pending" });
+
+stop
+
+@enduml
