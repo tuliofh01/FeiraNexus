@@ -1,0 +1,46 @@
+name: feiranexus-api
+region: nyc
+
+github:
+  repo: tuliofh01/FeiraNexus
+  branch: main
+  deploy_on_push: true
+
+services:
+  - name: web
+    dockerfile_path: fn_webserver/Dockerfile
+    source_dir: /fn_webserver
+    http_port: 8080
+    instance_size_slug: basic-xxs
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 10
+      period_seconds: 15
+      timeout_seconds: 5
+      failure_threshold: 3
+    envs:
+      - key: PORT
+        value: "8080"
+      - key: GIN_MODE
+        value: release
+      - key: DATABASE_URL
+        value: "${db.DATABASE_URL}"
+      - key: JWT_SECRET
+        type: SECRET
+        value: "${JWT_SECRET}"
+      - key: AES_MASTER_KEY_HEX
+        type: SECRET
+        value: "${AES_MASTER_KEY_HEX}"
+      - key: STRIPE_SECRET_KEY
+        type: SECRET
+        value: "${STRIPE_SECRET_KEY}"
+      - key: STRIPE_WEBHOOK_SECRET
+        type: SECRET
+        value: "${STRIPE_WEBHOOK_SECRET}"
+
+databases:
+  - name: feiranexus-db
+    engine: PG
+    version: "17"
+    size: db-s-1vcpu-1gb
+    num_nodes: 1
